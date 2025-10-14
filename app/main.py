@@ -1,10 +1,13 @@
 import logging
 from logging.handlers import RotatingFileHandler
-from fastapi import FastAPI
+from fastapi import FastAPI, Request, Depends
 from urllib.parse import urlparse
 from app.core.config import settings
 from app.core.database import Base, engine
 from app.routers import auth, dashboard
+import time
+from jose import JWTError
+from app.core.security import decode_access_token
 
 
 # === Setup Logging ===
@@ -41,7 +44,43 @@ app = FastAPI(
     debug=settings.DEBUG,
 )
 
+# === Middleware: HTTP Request Logging + Username ===
+@app.middleware("http")
+async def log_http_requests(request: Request, call_next):
+    """
+    Middleware untuk mencatat semua request HTTP,
+    termasuk user (diambil dari JWT jika ada).
+    """
+    start_time = time.time()
+    username = "anonymous"  # default jika belum login
 
+    # Coba ambil username dari Authorization header
+    try:
+        auth_header = request.headers.get("Authorization")
+        if auth_header and auth_header.startswith("Bearer "):
+            token = auth_header.split(" ")[1]
+            payload = decode_access_token(token)
+            username = payload.get("sub", "unknown")
+    except JWTError:
+        username = "invalid_token"
+
+    # Jalankan endpoint target
+    try:
+        response = await call_next(request)
+    except Exception as e:
+        logger.exception(f"[{username}] {request.method} {request.url.path} raised error: {e}")
+        raise
+
+    # Hitung waktu proses
+    process_time = (time.time() - start_time) * 1000  # ms
+    client_host = request.client.host if request.client else "unknown"
+
+    logger.info(
+        f"[{username}] {request.method} {request.url.path} "
+        f"- {response.status_code} ({process_time:.2f} ms) from {client_host}"
+    )
+
+    return response
 
 @app.on_event("startup")
 def startup_event():
