@@ -42,6 +42,7 @@ app = FastAPI(
 )
 
 
+
 @app.on_event("startup")
 def startup_event():
     """Log informasi konfigurasi saat server mulai"""
@@ -68,3 +69,4 @@ def root():
 
 # Tambahkan router auth
 app.include_router(auth.router, tags=["Authentication"])
+app.include_router(dashboard.router, tags=["Dashboard"])
