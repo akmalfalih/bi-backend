@@ -1,36 +1,75 @@
-from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy.orm import Session
+# app/routers/auth.py
 from datetime import timedelta
+from typing import Optional
+
+from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi.security import OAuth2PasswordRequestForm, OAuth2PasswordBearer
+from sqlalchemy.orm import Session
 
 from app.core.database import get_db
 from app.models.user import User
-from app.schemas.user import UserCreate, UserResponse
-from app.core.security import hash_password, verify_password, create_access_token, ACCESS_TOKEN_EXPIRE_MINUTES
+from app.schemas.user import UserCreate, UserOut, Token
+from app.core.security import (
+    get_password_hash,
+    verify_password,
+    create_access_token,
+    decode_access_token,
+)
+from app.core.config import settings
 
-router = APIRouter(prefix="/auth", tags=["Authentication"])
+router = APIRouter(prefix="/auth", tags=["auth"])
 
-# REGISTER
-@router.post("/register", response_model=UserResponse)
-def register(user: UserCreate, db: Session = Depends(get_db)):
-    existing_user = db.query(User).filter(User.email == user.email).first()
-    if existing_user:
-        raise HTTPException(status_code=400, detail="Email already registered")
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/auth/token")
 
-    hashed_pw = hash_password(user.password)
-    new_user = User(username=user.username, email=user.email, hashed_password=hashed_pw)
-    db.add(new_user)
+
+@router.post("/register", response_model=UserOut)
+def register_user(payload: UserCreate, db: Session = Depends(get_db)):
+    # cek username/email sudah ada
+    exists = db.query(User).filter((User.username == payload.username) | (User.email == payload.email)).first()
+    if exists:
+        raise HTTPException(status_code=400, detail="Username atau email sudah digunakan")
+
+    hashed = get_password_hash(payload.password)
+    user = User(username=payload.username, email=payload.email, hashed_password=hashed)
+    db.add(user)
     db.commit()
-    db.refresh(new_user)
-    return new_user
+    db.refresh(user)
+    return user
 
-# LOGIN
-@router.post("/login")
-def login(user: UserCreate, db: Session = Depends(get_db)):
-    db_user = db.query(User).filter(User.email == user.email).first()
-    if not db_user or not verify_password(user.password, db_user.hashed_password):
-        raise HTTPException(status_code=401, detail="Invalid credentials")
 
-    access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
-    access_token = create_access_token(data={"sub": db_user.email}, expires_delta=access_token_expires)
+@router.post("/token", response_model=Token)
+def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
+    # OAuth2PasswordRequestForm menyediakan .username dan .password (client biasanya kirim username)
+    # Kita mendukung login via username atau email:
+    field = form_data.username
+    user = db.query(User).filter((User.username == field) | (User.email == field)).first()
+    if not user:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Credensial tidak valid")
 
+    if not verify_password(form_data.password, user.hashed_password):
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Credensial tidak valid")
+
+    access_token_expires = timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
+    access_token = create_access_token(data={"sub": user.username}, expires_delta=access_token_expires)
     return {"access_token": access_token, "token_type": "bearer"}
+
+
+def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(get_db)) -> User:
+    from jose import JWTError  # lokal import untuk kejelasan
+    try:
+        payload = decode_access_token(token)
+        username: Optional[str] = payload.get("sub")
+        if username is None:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token tidak valid")
+    except JWTError:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token tidak valid")
+
+    user = db.query(User).filter(User.username == username).first()
+    if not user:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User tidak ditemukan")
+    return user
+
+
+@router.get("/me", response_model=UserOut)
+def read_current_user(current_user: User = Depends(get_current_user)):
+    return current_user

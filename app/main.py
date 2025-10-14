@@ -4,7 +4,7 @@ from fastapi import FastAPI
 from urllib.parse import urlparse
 from app.core.config import settings
 from app.core.database import Base, engine
-from app.routers import auth
+from app.routers import auth, dashboard
 
 
 # === Setup Logging ===
@@ -67,4 +67,4 @@ def root():
 
 
 # Tambahkan router auth
-app.include_router(auth.router, prefix="/auth", tags=["Authentication"])
+app.include_router(auth.router, tags=["Authentication"])

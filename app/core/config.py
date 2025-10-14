@@ -15,7 +15,7 @@ class Settings(BaseSettings):
     # === Security ===
     SECRET_KEY: str | None = None
     ALGORITHM: str = "HS256"
-    ACCESS_TOKEN_EXPIRE_MINUTES: int = 60 * 24  # 1 day
+    ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
 
     # === Logging ===
     LOG_DIR: str = "logs"
