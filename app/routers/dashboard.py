@@ -1,35 +1,125 @@
-# app/routers/dashboard.py
 from fastapi import APIRouter, Depends
-from app.routers.auth import get_current_user
-from app.models.user import User
+from sqlalchemy.orm import Session
+from datetime import date
+from sqlalchemy import func
+from app.core.database import get_db
+from app.services.security import get_current_user
+from app.models.t_tbs_dalam import TTbsDalam
+from app.models.t_trans_lintas_keluar import TTransLintasKeluar
+from app.models.t_trans_pemasaran import TTransPemasaran
 
-router = APIRouter(prefix="/dashboard", tags=["dashboard"])
+router = APIRouter(
+    prefix="/dashboard",
+    tags=["Dashboard"],
+)
 
 
 @router.get("/summary")
-def get_dashboard_summary(current_user: User = Depends(get_current_user)):
-    """
-    Endpoint dummy untuk menampilkan ringkasan statistik dashboard.
-    Hanya bisa diakses oleh user yang sudah login (token valid).
-    """
-    data = {
-        "total_users": 128,
-        "total_transactions": 5420,
-        "active_sessions": 17,
-        "system_status": "Operational",
+def get_dashboard_summary(db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
+    """Get summarized production data for current month"""
+    today = date.today()
+    start_of_month = today.replace(day=1)
+
+    # Total TBS dari kebun sendiri (TTbsDalam)
+    total_tbs_dalam = (
+        db.query(TTbsDalam)
+        .filter(TTbsDalam.TglTransaksiOne >= start_of_month)
+        .with_entities(func.sum(TTbsDalam.Total))
+        .scalar()
+    ) or 0
+
+    # Total TBS lintas keluar (penjualan lintas)
+    total_lintas_keluar = (
+        db.query(TTransLintasKeluar)
+        .filter(TTransLintasKeluar.TglTmb1 >= start_of_month)
+        .with_entities(func.sum(TTransLintasKeluar.Total))
+        .scalar()
+    ) or 0
+
+    # Total Pemasaran (hasil olahan CPO, Kernel, dll)
+    total_pemasaran = (
+        db.query(TTransPemasaran)
+        .filter(TTransPemasaran.TglTmb1 >= start_of_month)
+        .with_entities(func.sum(TTransPemasaran.TotalTmb))
+        .scalar()
+    ) or 0
+
+    # Total transaksi (gabungan 3 tabel)
+    total_transaksi = (
+        db.query(TTbsDalam).filter(TTbsDalam.TglTransaksiOne >= start_of_month).count()
+        + db.query(TTransLintasKeluar).filter(TTransLintasKeluar.TglTmb1 >= start_of_month).count()
+        + db.query(TTransPemasaran).filter(TTransPemasaran.TglTmb1 >= start_of_month).count()
+    )
+
+    return {
+        "message": "Dashboard summary retrieved successfully",
+        "period": {
+            "start_date": str(start_of_month),
+            "end_date": str(today),
+        },
+        "data": {
+            "total_tbs_dalam": total_tbs_dalam,
+            "total_lintas_keluar": total_lintas_keluar,
+            "total_pemasaran": total_pemasaran,
+            "total_transaksi": total_transaksi,
+        },
     }
-    return {"message": "Dashboard summary retrieved successfully", "data": data}
 
 
 @router.get("/activities")
-def get_recent_activities(current_user: User = Depends(get_current_user)):
-    """
-    Endpoint dummy untuk menampilkan daftar aktivitas terbaru.
-    """
-    activities = [
-        {"timestamp": "2025-10-14T09:00:00", "activity": "User A added new TBS entry"},
-        {"timestamp": "2025-10-14T09:30:00", "activity": "User B updated transaction data"},
-        {"timestamp": "2025-10-14T10:00:00", "activity": "User C viewed marketing report"},
-        {"timestamp": "2025-10-14T10:15:00", "activity": "User D logged in"},
-    ]
-    return {"message": "Recent activities retrieved successfully", "data": activities}
+def get_dashboard_activities(db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
+    """Get recent combined activities from TBS Dalam, Lintas Keluar, and Pemasaran"""
+    from sqlalchemy import desc
+
+    tbs_activities = (
+        db.query(TTbsDalam.NoTransaksi, TTbsDalam.NamaProduk, TTbsDalam.Total, TTbsDalam.TglTransaksiOne)
+        .order_by(desc(TTbsDalam.TglTransaksiOne))
+        .limit(10)
+        .all()
+    )
+    lintas_activities = (
+        db.query(TTransLintasKeluar.NoTransaksi, TTransLintasKeluar.NamaProduk, TTransLintasKeluar.Total, TTransLintasKeluar.TglTmb1)
+        .order_by(desc(TTransLintasKeluar.TglTmb1))
+        .limit(5)
+        .all()
+    )
+    pemasaran_activities = (
+        db.query(TTransPemasaran.NoTransaksi, TTransPemasaran.NamaProduk, TTransPemasaran.TotalTmb, TTransPemasaran.TglTmb1)
+        .order_by(desc(TTransPemasaran.TglTmb1))
+        .limit(5)
+        .all()
+    )
+
+    combined = []
+    for trx in tbs_activities:
+        combined.append({
+            "source": "TBS Dalam",
+            "no_transaksi": trx.NoTransaksi,
+            "produk": trx.NamaProduk,
+            "total": trx.Total,
+            "tanggal": str(trx.TglTransaksiOne)
+        })
+    for trx in lintas_activities:
+        combined.append({
+            "source": "Lintas Keluar",
+            "no_transaksi": trx.NoTransaksi,
+            "produk": trx.NamaProduk,
+            "total": trx.Total,
+            "tanggal": str(trx.TglTmb1)
+        })
+    for trx in pemasaran_activities:
+        combined.append({
+            "source": "Pemasaran",
+            "no_transaksi": trx.NoTransaksi,
+            "produk": trx.NamaProduk,
+            "total": trx.TotalTmb,
+            "tanggal": str(trx.TglTmb1)
+        })
+
+    # Sort all activities descending by date
+    combined = sorted(combined, key=lambda x: x["tanggal"], reverse=True)
+
+    return {
+        "message": "Recent activities retrieved successfully",
+        "data": combined[:20],
+    }
