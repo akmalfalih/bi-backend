@@ -123,3 +123,36 @@ def get_dashboard_activities(db: Session = Depends(get_db), current_user: dict =
         "message": "Recent activities retrieved successfully",
         "data": combined[:20],
     }
+
+@router.get("/production/tbs")
+def get_tbs_production_daily(db=Depends(get_db), current_user: dict = Depends(get_current_user)):
+    """
+    Get daily TBS production data (for current month)
+    """
+    today = date.today()
+    start_of_month = today.replace(day=1)
+
+    # Query total produksi per tanggal (bulan berjalan)
+    results = (
+        db.query(
+            func.date(TTbsDalam.TglTransaksiOne).label("date"),
+            func.sum(TTbsDalam.Total).label("total")
+        )
+        .filter(TTbsDalam.TglTransaksiOne >= start_of_month)
+        .filter(TTbsDalam.TglTransaksiOne <= today)
+        .group_by(func.date(TTbsDalam.TglTransaksiOne))
+        .order_by(func.date(TTbsDalam.TglTransaksiOne))
+        .all()
+    )
+
+    # Format hasil query ke JSON-friendly structure
+    data = [
+        {"date": r.date.strftime("%Y-%m-%d"), "total": float(r.total or 0)}
+        for r in results
+    ]
+
+    return {
+        "message": "Daily TBS production data retrieved successfully",
+        "period": {"start_date": str(start_of_month), "end_date": str(today)},
+        "data": data
+    }
