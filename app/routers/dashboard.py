@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 from datetime import date
 from sqlalchemy import func
@@ -7,6 +7,7 @@ from app.services.security import get_current_user
 from app.models.t_tbs_dalam import TTbsDalam
 from app.models.t_trans_lintas_keluar import TTransLintasKeluar
 from app.models.t_trans_pemasaran import TTransPemasaran
+from app.models.m_lokasi import MLokasi
 
 router = APIRouter(
     prefix="/dashboard",
@@ -155,4 +156,42 @@ def get_tbs_production_daily(db=Depends(get_db), current_user: dict = Depends(ge
         "message": "Daily TBS production data retrieved successfully",
         "period": {"start_date": str(start_of_month), "end_date": str(today)},
         "data": data
+    }
+
+@router.get("/production/by-location")
+def get_production_by_location(
+    db: Session = Depends(get_db),
+    include_empty: bool = Query(True, description="Include locations with zero production this month")):
+
+    today = date.today()
+    start_of_month = date(today.year, today.month, 1)
+
+    # Base query with LEFT JOIN
+    query = (
+        db.query(
+            MLokasi.id_lokasi,
+            MLokasi.kode_lokasi,
+            func.coalesce(func.sum(TTbsDalam.Total), 0).label("total")
+        )
+        .outerjoin(
+            TTbsDalam,
+            (TTbsDalam.id_lokasi == MLokasi.id_lokasi)
+            & (TTbsDalam.TglTransaksiOne >= start_of_month)
+            & (TTbsDalam.TglTransaksiOne <= today)
+        )
+        .group_by(MLokasi.id_lokasi, MLokasi.kode_lokasi)
+        .order_by(MLokasi.id_lokasi)
+    )
+
+    results = query.all()
+
+    response_data = [
+        {"id_lokasi": r.id_lokasi, "kode_lokasi": r.kode_lokasi, "total": float(r.total or 0)}
+        for r in results
+    ]
+
+    return {
+        "message": "Production by location retrieved successfully",
+        "period": {"start_date": start_of_month, "end_date": today},
+        "data": response_data
     }

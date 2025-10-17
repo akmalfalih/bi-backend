@@ -4,6 +4,7 @@ from app.models.t_tbs_dalam import TTbsDalam
 from app.models.t_trans_lintas import TTransLintas
 from app.models.t_trans_lintas_keluar import TTransLintasKeluar
 from app.models.t_trans_pemasaran import TTransPemasaran
+from app.models.m_lokasi import MLokasi
 
 __all__ = [
     "User",
@@ -12,4 +13,5 @@ __all__ = [
     "TTransLintas",
     "TTransLintasKeluar",
     "TTransPemasaran",
+    "Mlokasi",
     ]

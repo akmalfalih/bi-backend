@@ -60,7 +60,7 @@ async def log_http_requests(request: Request, call_next):
         if auth_header and auth_header.startswith("Bearer "):
             token = auth_header.split(" ")[1]
             payload = decode_access_token(token)
-            username = payload.get("sub", "unknown")
+            username = payload.get("sub", "unknown") if payload else "anonymous"
     except JWTError:
         username = "invalid_token"
 
