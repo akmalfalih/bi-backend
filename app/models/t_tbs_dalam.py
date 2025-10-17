@@ -24,7 +24,7 @@ class TTbsDalam(Base):
     TotalPot = Column(Integer)
     BJR = Column(Integer)
     JenisTbs = Column(String(50))
-    id_lokasi = Column(Integer, nullable=True)  # backend-only field
+    lokasi_penimbangan = Column(String(100), nullable=True)
 
     def __repr__(self):
         return f"<TTbsDalam(NoTransaksi={self.NoTransaksi}, Total={self.Total}, Kebun={self.NamaKebun})>"

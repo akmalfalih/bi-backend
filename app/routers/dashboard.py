@@ -166,28 +166,19 @@ def get_production_by_location(
     today = date.today()
     start_of_month = date(today.year, today.month, 1)
 
-    # Base query with LEFT JOIN
-    query = (
-        db.query(
-            MLokasi.id_lokasi,
-            MLokasi.kode_lokasi,
-            func.coalesce(func.sum(TTbsDalam.Total), 0).label("total")
-        )
-        .outerjoin(
-            TTbsDalam,
-            (TTbsDalam.id_lokasi == MLokasi.id_lokasi)
-            & (TTbsDalam.TglTransaksiOne >= start_of_month)
-            & (TTbsDalam.TglTransaksiOne <= today)
-        )
-        .group_by(MLokasi.id_lokasi, MLokasi.kode_lokasi)
-        .order_by(MLokasi.id_lokasi)
+    results = (
+    db.query(
+        TTbsDalam.NamaKebun.label("nama_kebun"),
+        func.sum(TTbsDalam.Total).label("total")
+    )
+    .filter(TTbsDalam.TglTransaksiOne >= start_of_month, TTbsDalam.TglTransaksiOne <= today, TTbsDalam.JenisTbs == "Tbs Dalam")
+    .group_by(TTbsDalam.NamaKebun)
+    .all()
     )
 
-    results = query.all()
-
     response_data = [
-        {"id_lokasi": r.id_lokasi, "kode_lokasi": r.kode_lokasi, "total": float(r.total or 0)}
-        for r in results
+        {"nama_kebun": row.nama_kebun or "Tidak Diketahui", "total": row.total}
+        for row in results
     ]
 
     return {
