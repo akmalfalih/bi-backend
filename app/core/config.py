@@ -11,6 +11,7 @@ class Settings(BaseSettings):
 
     # === Database ===
     DATABASE_URL: str
+    SQLALCHEMY_DATABASE_URI: str | None = None
 
     # === Security ===
     SECRET_KEY: str | None = None
@@ -27,6 +28,8 @@ class Settings(BaseSettings):
 
 
 settings = Settings()
+
+settings.SQLALCHEMY_DATABASE_URI = settings.DATABASE_URL
 
 # Auto-generate SECRET_KEY if not found
 if not settings.SECRET_KEY:

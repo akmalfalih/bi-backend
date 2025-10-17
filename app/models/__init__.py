@@ -13,5 +13,5 @@ __all__ = [
     "TTransLintas",
     "TTransLintasKeluar",
     "TTransPemasaran",
-    "Mlokasi",
+    "MLokasi",
     ]
