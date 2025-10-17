@@ -199,3 +199,61 @@ def get_production_by_kebun(db: Session = Depends(get_db)):
         "period": {"start_date": str(start_of_month), "end_date": str(today)},
         "data": data,
     }
+
+@router.get("/production/composition")
+def get_production_composition(
+    db: Session = Depends(get_db),
+    start_date: date = Query(None, description="Tanggal mulai periode (YYYY-MM-DD)"),
+    end_date: date = Query(None, description="Tanggal akhir periode (YYYY-MM-DD)")
+    ):
+
+    # Tentukan periode bulan berjalan
+    today = date.today()
+    if not start_date:
+        start_date = today.replace(day=1)
+    if not end_date:
+        end_date = today
+
+    # Hitung total keseluruhan TBS dalam periode
+    total_overall = (
+        db.query(func.sum(TTbsDalam.Total))
+        .filter(
+            TTbsDalam.TglTransaksiOne >= start_date,
+            TTbsDalam.TglTransaksiOne <= end_date
+        )
+        .scalar() or 0
+    )
+
+    # Ambil total per kebun
+    results = (
+        db.query(
+            TTbsDalam.NamaKebun.label("nama_kebun"),
+            func.sum(TTbsDalam.Total).label("total")
+        )
+        .filter(
+            TTbsDalam.TglTransaksiOne >= start_date,
+            TTbsDalam.TglTransaksiOne <= end_date
+        )
+        .group_by(TTbsDalam.NamaKebun)
+        .order_by(func.sum(TTbsDalam.Total).desc())
+        .all()
+    )
+
+    # Buat list dengan persentase
+    data = []
+    for row in results:
+        percentage = (row.total / total_overall * 100) if total_overall > 0 else 0
+        data.append({
+            "nama_kebun": row.nama_kebun or "Tidak Diketahui",
+            "total": row.total,
+            "percentage": round(percentage, 2)
+        })
+
+    return {
+        "message": "Production composition retrieved successfully",
+        "period": {
+            "start_date": start_date.isoformat(),
+            "end_date": end_date.isoformat()
+        },
+        "data": data
+    }
