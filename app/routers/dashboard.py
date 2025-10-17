@@ -16,48 +16,48 @@ router = APIRouter(
 
 
 @router.get("/summary")
-def get_dashboard_summary(db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
-    """Get summarized production data for current month"""
+def get_dashboard_summary(db: Session = Depends(get_db)):
+    """
+    Menampilkan ringkasan data produksi bulan berjalan:
+    - Total TBS Dalam
+    - Total Lintas Keluar
+    - Total Pemasaran
+    - Total Transaksi
+    """
     today = date.today()
     start_of_month = today.replace(day=1)
 
-    # Total TBS dari kebun sendiri (TTbsDalam)
     total_tbs_dalam = (
-        db.query(TTbsDalam)
+        db.query(func.sum(TTbsDalam.Total))
         .filter(TTbsDalam.TglTransaksiOne >= start_of_month)
-        .with_entities(func.sum(TTbsDalam.Total))
         .scalar()
-    ) or 0
+        or 0
+    )
 
-    # Total TBS lintas keluar (penjualan lintas)
     total_lintas_keluar = (
-        db.query(TTransLintasKeluar)
+        db.query(func.sum(TTransLintasKeluar.Total))
         .filter(TTransLintasKeluar.TglTmb1 >= start_of_month)
-        .with_entities(func.sum(TTransLintasKeluar.Total))
         .scalar()
-    ) or 0
+        or 0
+    )
 
-    # Total Pemasaran (hasil olahan CPO, Kernel, dll)
     total_pemasaran = (
-        db.query(TTransPemasaran)
+        db.query(func.sum(TTransPemasaran.TotalTmb))
         .filter(TTransPemasaran.TglTmb1 >= start_of_month)
-        .with_entities(func.sum(TTransPemasaran.TotalTmb))
         .scalar()
-    ) or 0
+        or 0
+    )
 
-    # Total transaksi (gabungan 3 tabel)
     total_transaksi = (
-        db.query(TTbsDalam).filter(TTbsDalam.TglTransaksiOne >= start_of_month).count()
-        + db.query(TTransLintasKeluar).filter(TTransLintasKeluar.TglTmb1 >= start_of_month).count()
-        + db.query(TTransPemasaran).filter(TTransPemasaran.TglTmb1 >= start_of_month).count()
+        db.query(func.count(TTbsDalam.NoTransaksi))
+        .filter(TTbsDalam.TglTransaksiOne >= start_of_month)
+        .scalar()
+        or 0
     )
 
     return {
         "message": "Dashboard summary retrieved successfully",
-        "period": {
-            "start_date": str(start_of_month),
-            "end_date": str(today),
-        },
+        "period": {"start_date": str(start_of_month), "end_date": str(today)},
         "data": {
             "total_tbs_dalam": total_tbs_dalam,
             "total_lintas_keluar": total_lintas_keluar,
@@ -125,64 +125,77 @@ def get_dashboard_activities(db: Session = Depends(get_db), current_user: dict =
         "data": combined[:20],
     }
 
-@router.get("/production/tbs")
-def get_tbs_production_daily(db=Depends(get_db), current_user: dict = Depends(get_current_user)):
+@router.get("/production/trend", summary="Get TBS production trend")
+def get_production_trend(start_date: date | None = Query(None, description="Start date (YYYY-MM-DD)"),
+    end_date: date | None = Query(None, description="End date (YYYY-MM-DD)"),
+    db: Session = Depends(get_db)):
     """
     Get daily TBS production data (for current month)
     """
     today = date.today()
     start_of_month = today.replace(day=1)
 
-    # Query total produksi per tanggal (bulan berjalan)
+    # Gunakan default bulan berjalan bila parameter kosong
+    if not start_date or not end_date:
+        start_date, end_date = start_of_month, today
+
+    # Query optimized: total berat berdasarkan NamaKebun
     results = (
         db.query(
-            func.date(TTbsDalam.TglTransaksiOne).label("date"),
+            TTbsDalam.TglTransaksiOne.label("tanggal"),
             func.sum(TTbsDalam.Total).label("total")
         )
-        .filter(TTbsDalam.TglTransaksiOne >= start_of_month)
-        .filter(TTbsDalam.TglTransaksiOne <= today)
-        .group_by(func.date(TTbsDalam.TglTransaksiOne))
-        .order_by(func.date(TTbsDalam.TglTransaksiOne))
+        .filter(
+            TTbsDalam.TglTransaksiOne >= start_date,
+            TTbsDalam.TglTransaksiOne <= end_date
+        )
+        .group_by(TTbsDalam.TglTransaksiOne)
+        .order_by(TTbsDalam.TglTransaksiOne)
         .all()
     )
 
-    # Format hasil query ke JSON-friendly structure
+    # Format hasil
     data = [
-        {"date": r.date.strftime("%Y-%m-%d"), "total": float(r.total or 0)}
-        for r in results
-    ]
-
-    return {
-        "message": "Daily TBS production data retrieved successfully",
-        "period": {"start_date": str(start_of_month), "end_date": str(today)},
-        "data": data
-    }
-
-@router.get("/production/by-location")
-def get_production_by_location(
-    db: Session = Depends(get_db),
-    include_empty: bool = Query(True, description="Include locations with zero production this month")):
-
-    today = date.today()
-    start_of_month = date(today.year, today.month, 1)
-
-    results = (
-    db.query(
-        TTbsDalam.NamaKebun.label("nama_kebun"),
-        func.sum(TTbsDalam.Total).label("total")
-    )
-    .filter(TTbsDalam.TglTransaksiOne >= start_of_month, TTbsDalam.TglTransaksiOne <= today, TTbsDalam.JenisTbs == "Tbs Dalam")
-    .group_by(TTbsDalam.NamaKebun)
-    .all()
-    )
-
-    response_data = [
-        {"nama_kebun": row.nama_kebun or "Tidak Diketahui", "total": row.total}
+        {
+            "tanggal": row.tanggal.strftime("%Y-%m-%d"),
+            "total": float(row.total or 0)
+        }
         for row in results
     ]
 
     return {
-        "message": "Production by location retrieved successfully",
-        "period": {"start_date": start_of_month, "end_date": today},
-        "data": response_data
+        "message": "TBS production trend retrieved successfully",
+        "period": {"start_date": start_date, "end_date": end_date},
+        "data": data
+    }
+
+@router.get("/production/by-location")
+def get_production_by_kebun(db: Session = Depends(get_db)):
+    """
+    Menampilkan total tonase produksi TBS per asal kebun (NamaKebun)
+    berdasarkan transaksi bulan berjalan.
+    """
+    today = date.today()
+    start_of_month = today.replace(day=1)
+
+    results = (
+        db.query(
+            TTbsDalam.NamaKebun.label("nama_kebun"),
+            func.sum(TTbsDalam.Total).label("total"),
+        )
+        .filter(TTbsDalam.TglTransaksiOne >= start_of_month)
+        .group_by(TTbsDalam.NamaKebun)
+        .order_by(func.sum(TTbsDalam.Total).desc())
+        .all()
+    )
+
+    data = [
+        {"nama_kebun": r.nama_kebun or "Tidak Diketahui", "total": float(r.total or 0)}
+        for r in results
+    ]
+
+    return {
+        "message": "Production by kebun retrieved successfully",
+        "period": {"start_date": str(start_of_month), "end_date": str(today)},
+        "data": data,
     }
