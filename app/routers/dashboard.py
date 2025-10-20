@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
-from datetime import date
-from sqlalchemy import func
+from datetime import date, datetime
+from sqlalchemy import func, and_
 from app.core.database import get_db
 from app.services.security import get_current_user
 from app.models.t_tbs_dalam import TTbsDalam
@@ -13,6 +13,15 @@ router = APIRouter(
     prefix="/dashboard",
     tags=["Dashboard"],
 )
+
+# Filter berdasarkan periode tanggal
+def get_date_filters(start_date: date | None, end_date: date | None):
+    """Mengatur default tanggal (bulan berjalan) jika filter tidak diberikan."""
+    today = datetime.today()
+    start_of_month = date(today.year, today.month, 1)
+    start = start_date or start_of_month
+    end = end_date or today.date()
+    return start, end
 
 
 @router.get("/summary")
@@ -69,7 +78,7 @@ def get_dashboard_summary(db: Session = Depends(get_db)):
 
 @router.get("/activities")
 def get_dashboard_activities(db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
-    """Get recent combined activities from TBS Dalam, Lintas Keluar, and Pemasaran"""
+    """Menampilkan kombinasi aktifitas terbaru dari TBS Dalam, Lintas Keluar, dan Pemasaran"""
     from sqlalchemy import desc
 
     tbs_activities = (
@@ -126,47 +135,46 @@ def get_dashboard_activities(db: Session = Depends(get_db), current_user: dict =
     }
 
 @router.get("/production/trend", summary="Get TBS production trend")
-def get_production_trend(start_date: date | None = Query(None, description="Start date (YYYY-MM-DD)"),
-    end_date: date | None = Query(None, description="End date (YYYY-MM-DD)"),
-    db: Session = Depends(get_db)):
+def get_production_trend(
+    start_date: date | None = Query(None),
+    end_date: date | None = Query(None),
+    nama_kebun: str | None = Query(None),
+    db: Session = Depends(get_db),
+):
     """
-    Get daily TBS production data (for current month)
+    Menampilkan tren produksi TBS berdasarkan tanggal (digunakan untuk line chart).
+    Bisa difilter berdasarkan tanggal, kebun, dan lokasi timbang.
     """
-    today = date.today()
-    start_of_month = today.replace(day=1)
+    start, end = get_date_filters(start_date, end_date)
 
-    # Gunakan default bulan berjalan bila parameter kosong
-    if not start_date or not end_date:
-        start_date, end_date = start_of_month, today
-
-    # Query optimized: total berat berdasarkan NamaKebun
-    results = (
+    query = (
         db.query(
-            TTbsDalam.TglTransaksiOne.label("tanggal"),
+            func.date(TTbsDalam.TglTransaksiOne).label("tanggal"),
             func.sum(TTbsDalam.Total).label("total")
         )
         .filter(
-            TTbsDalam.TglTransaksiOne >= start_date,
-            TTbsDalam.TglTransaksiOne <= end_date
+            and_(
+                TTbsDalam.TglTransaksiOne >= start,
+                TTbsDalam.TglTransaksiOne <= end,
+            )
         )
-        .group_by(TTbsDalam.TglTransaksiOne)
-        .order_by(TTbsDalam.TglTransaksiOne)
-        .all()
     )
 
-    # Format hasil
-    data = [
-        {
-            "tanggal": row.tanggal.strftime("%Y-%m-%d"),
-            "total": float(row.total or 0)
-        }
-        for row in results
-    ]
+    if nama_kebun:
+        query = query.filter(TTbsDalam.NamaKebun == nama_kebun)
+
+    results = query.group_by(func.date(TTbsDalam.TglTransaksiOne)).order_by("tanggal").all()
+
+    data = [{"tanggal": str(r.tanggal), "total": float(r.total)} for r in results]
 
     return {
-        "message": "TBS production trend retrieved successfully",
-        "period": {"start_date": start_date, "end_date": end_date},
-        "data": data
+        "message": "Production trend retrieved successfully",
+        "filters": {
+            "start_date": str(start),
+            "end_date": str(end),
+            "nama_kebun": nama_kebun,
+        },
+        "data": data,
     }
 
 @router.get("/production/by-location")
@@ -202,58 +210,51 @@ def get_production_by_kebun(db: Session = Depends(get_db)):
 
 @router.get("/production/composition")
 def get_production_composition(
+    start_date: date | None = Query(None),
+    end_date: date | None = Query(None),
+    nama_kebun: str | None = Query(None),
     db: Session = Depends(get_db),
-    start_date: date = Query(None, description="Tanggal mulai periode (YYYY-MM-DD)"),
-    end_date: date = Query(None, description="Tanggal akhir periode (YYYY-MM-DD)")
-    ):
+):
+    """
+    Menampilkan proporsi produksi TBS berdasarkan NamaKebun (pie chart).
+    Bisa difilter berdasarkan tanggal dan lokasi timbang.
+    """
+    start, end = get_date_filters(start_date, end_date)
 
-    # Tentukan periode bulan berjalan
-    today = date.today()
-    if not start_date:
-        start_date = today.replace(day=1)
-    if not end_date:
-        end_date = today
-
-    # Hitung total keseluruhan TBS dalam periode
-    total_overall = (
-        db.query(func.sum(TTbsDalam.Total))
-        .filter(
-            TTbsDalam.TglTransaksiOne >= start_date,
-            TTbsDalam.TglTransaksiOne <= end_date
-        )
-        .scalar() or 0
-    )
-
-    # Ambil total per kebun
-    results = (
+    query = (
         db.query(
-            TTbsDalam.NamaKebun.label("nama_kebun"),
+            TTbsDalam.NamaKebun,
             func.sum(TTbsDalam.Total).label("total")
         )
         .filter(
-            TTbsDalam.TglTransaksiOne >= start_date,
-            TTbsDalam.TglTransaksiOne <= end_date
+            and_(
+                TTbsDalam.TglTransaksiOne >= start,
+                TTbsDalam.TglTransaksiOne <= end,
+            )
         )
-        .group_by(TTbsDalam.NamaKebun)
-        .order_by(func.sum(TTbsDalam.Total).desc())
-        .all()
     )
 
-    # Buat list dengan persentase
-    data = []
-    for row in results:
-        percentage = (row.total / total_overall * 100) if total_overall > 0 else 0
-        data.append({
-            "nama_kebun": row.nama_kebun or "Tidak Diketahui",
-            "total": row.total,
-            "percentage": round(percentage, 2)
-        })
+    if nama_kebun:
+        query = query.filter(TTbsDalam.NamaKebun == nama_kebun)
+
+    results = query.group_by(TTbsDalam.NamaKebun).all()
+    total_all = sum(float(r.total) for r in results)
+
+    data = [
+        {
+            "nama_kebun": r.NamaKebun,
+            "total": float(r.total),
+            "persentase": round((float(r.total) / total_all * 100), 2) if total_all > 0 else 0,
+        }
+        for r in results
+    ]
 
     return {
         "message": "Production composition retrieved successfully",
-        "period": {
-            "start_date": start_date.isoformat(),
-            "end_date": end_date.isoformat()
+        "filters": {
+            "start_date": str(start),
+            "end_date": str(end),
+            "nama_kebun": nama_kebun,
         },
-        "data": data
+        "data": data,
     }
