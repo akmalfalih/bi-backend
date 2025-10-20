@@ -1,18 +1,40 @@
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from sqlalchemy import func, and_, distinct, cast, Float
 from app.core.database import get_db
 from app.services.security import get_current_user
 from app.models.t_tbs_dalam import TTbsDalam
 from app.models.t_trans_lintas_keluar import TTransLintasKeluar
 from app.models.t_trans_pemasaran import TTransPemasaran
+from cachetools import TTLCache, cached
+from cachetools.keys import hashkey
+import logging
 # from app.models.m_lokasi import MLokasi
+# logger sederhana
+logger = logging.getLogger("APN-Riau.dashboard")
+logger.propagate = True  # biarkan log ini diteruskan ke root handler
 
 router = APIRouter(
     prefix="/dashboard",
     tags=["Dashboard"],
 )
+
+# ==== SIMPLE IN-MEMORY CACHE ====
+cache_store = {}
+CACHE_TTL = timedelta(minutes=5)
+
+def get_cache(key):
+    if key in cache_store:
+        value, expiry = cache_store[key]
+        if datetime.now() < expiry:
+            return value
+        else:
+            del cache_store[key]  # expired
+    return None
+
+def set_cache(key, value):
+    cache_store[key] = (value, datetime.now() + CACHE_TTL)
 
 # Filter berdasarkan periode tanggal
 def get_date_filters(start_date: date | None, end_date: date | None):
@@ -30,14 +52,21 @@ def get_production_summary(
     end_date: date | None = Query(None),
     db: Session = Depends(get_db)
 ):
-    # --- default ke bulan berjalan ---
     today = date.today()
     if not start_date:
         start_date = today.replace(day=1)
     if not end_date:
         end_date = today
 
-    # PRODUKSI TBS
+    cache_key = f"summary_{start_date}_{end_date}"
+    cached = get_cache(cache_key)
+    if cached:
+        logger.info(f"[CACHE HIT] summary {start_date} -> {end_date}")
+        return cached
+
+    logger.info(f"[CACHE MISS] summary {start_date} -> {end_date}")
+
+    # --- PRODUKSI TBS ---
     tbs_query = (
         db.query(
             func.sum(TTbsDalam.Total).label("total_produksi"),
@@ -52,7 +81,7 @@ def get_production_summary(
     hari_tbs = tbs_result.jumlah_hari or 1
     rata_tbs_per_hari = total_tbs / hari_tbs
 
-    # PEMASARAN CPO
+    # --- PEMASARAN CPO ---
     cpo_query = (
         db.query(
             func.sum(TTransPemasaran.TotalTmb).label("total_terjual"),
@@ -67,8 +96,7 @@ def get_production_summary(
 
     cpo_result = cpo_query.first()
 
-    # --- Response ---
-    return {
+    response = {
         "message": "Production & CPO summary retrieved successfully",
         "period": {
             "start_date": str(start_date),
@@ -78,7 +106,6 @@ def get_production_summary(
             "tbs": {
                 "total_panen": total_tbs,
                 "rata_rata_per_hari": rata_tbs_per_hari,
-
             },
             "cpo": {
                 "total_terjual": cpo_result.total_terjual or 0,
@@ -89,6 +116,8 @@ def get_production_summary(
         }
     }
 
+    set_cache(cache_key, response)
+    return response
 
 @router.get("/activities")
 def get_dashboard_activities(db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
@@ -148,79 +177,96 @@ def get_dashboard_activities(db: Session = Depends(get_db), current_user: dict =
         "data": combined[:20],
     }
 
-@router.get("/production/trend", summary="Get TBS production trend")
+@router.get("/production/trend")
 def get_production_trend(
     start_date: date | None = Query(None),
     end_date: date | None = Query(None),
-    nama_kebun: str | None = Query(None),
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_db)
 ):
-    """
-    Menampilkan tren produksi TBS berdasarkan tanggal (digunakan untuk line chart).
-    Bisa difilter berdasarkan tanggal, kebun, dan lokasi timbang.
-    """
-    start, end = get_date_filters(start_date, end_date)
+    today = date.today()
+    if not start_date:
+        start_date = today.replace(day=1)
+    if not end_date:
+        end_date = today
+
+    cache_key = f"trend_{start_date}_{end_date}"
+    cached = get_cache(cache_key)
+    if cached:
+        logger.info(f"[CACHE HIT] trend {start_date} -> {end_date}")
+        return cached
+
+    logger.info(f"[CACHE MISS] trend {start_date} -> {end_date}")
 
     query = (
         db.query(
-            func.date(TTbsDalam.TglTransaksiOne).label("tanggal"),
-            func.sum(TTbsDalam.Total).label("total")
+            TTbsDalam.TglTransaksiOne.label("tanggal"),
+            func.sum(TTbsDalam.Total).label("total_produksi")
         )
-        .filter(
-            and_(
-                TTbsDalam.TglTransaksiOne >= start,
-                TTbsDalam.TglTransaksiOne <= end,
-            )
-        )
+        .filter(TTbsDalam.TglTransaksiOne >= start_date)
+        .filter(TTbsDalam.TglTransaksiOne <= end_date)
+        .group_by(TTbsDalam.TglTransaksiOne)
+        .order_by(TTbsDalam.TglTransaksiOne)
     )
 
-    if nama_kebun:
-        query = query.filter(TTbsDalam.NamaKebun == nama_kebun)
-
-    results = query.group_by(func.date(TTbsDalam.TglTransaksiOne)).order_by("tanggal").all()
-
-    data = [{"tanggal": str(r.tanggal), "total": float(r.total)} for r in results]
-
-    return {
-        "message": "Production trend retrieved successfully",
-        "filters": {
-            "start_date": str(start),
-            "end_date": str(end),
-            "nama_kebun": nama_kebun,
-        },
-        "data": data,
-    }
-
-@router.get("/production/by-location")
-def get_production_by_kebun(db: Session = Depends(get_db)):
-    """
-    Menampilkan total tonase produksi TBS per asal kebun (NamaKebun)
-    berdasarkan transaksi bulan berjalan.
-    """
-    today = date.today()
-    start_of_month = today.replace(day=1)
-
-    results = (
-        db.query(
-            TTbsDalam.NamaKebun.label("nama_kebun"),
-            func.sum(TTbsDalam.Total).label("total"),
-        )
-        .filter(TTbsDalam.TglTransaksiOne >= start_of_month)
-        .group_by(TTbsDalam.NamaKebun)
-        .order_by(func.sum(TTbsDalam.Total).desc())
-        .all()
-    )
-
+    results = query.all()
     data = [
-        {"nama_kebun": r.nama_kebun or "Tidak Diketahui", "total": float(r.total or 0)}
+        {"tanggal": r.tanggal.isoformat(), "total": r.total_produksi or 0}
         for r in results
     ]
 
-    return {
-        "message": "Production by kebun retrieved successfully",
-        "period": {"start_date": str(start_of_month), "end_date": str(today)},
-        "data": data,
+    response = {
+        "message": "Production trend retrieved successfully",
+        "period": {"start_date": str(start_date), "end_date": str(end_date)},
+        "data": data
     }
+
+    set_cache(cache_key, response)
+    return response
+
+@router.get("/production/by-location")
+def get_production_by_location(
+    start_date: date | None = Query(None),
+    end_date: date | None = Query(None),
+    db: Session = Depends(get_db)
+):
+    today = date.today()
+    if not start_date:
+        start_date = today.replace(day=1)
+    if not end_date:
+        end_date = today
+
+    cache_key = f"by_location_{start_date}_{end_date}"
+    cached = get_cache(cache_key)
+    if cached:
+        logger.info(f"[CACHE HIT] by-location {start_date} -> {end_date}")
+        return cached
+
+    logger.info(f"[CACHE MISS] by-location {start_date} -> {end_date}")
+
+    query = (
+        db.query(
+            TTbsDalam.NamaKebun.label("nama_kebun"),
+            func.sum(TTbsDalam.Total).label("total_produksi")
+        )
+        .filter(TTbsDalam.TglTransaksiOne >= start_date)
+        .filter(TTbsDalam.TglTransaksiOne <= end_date)
+        .group_by(TTbsDalam.NamaKebun)
+    )
+
+    results = query.all()
+    data = [
+        {"nama_kebun": r.nama_kebun or "Tidak Diketahui", "total": r.total_produksi or 0}
+        for r in results
+    ]
+
+    response = {
+        "message": "Production by origin (NamaKebun) retrieved successfully",
+        "period": {"start_date": str(start_date), "end_date": str(end_date)},
+        "data": data
+    }
+
+    set_cache(cache_key, response)
+    return response
 
 @router.get("/production/composition")
 def get_production_composition(
