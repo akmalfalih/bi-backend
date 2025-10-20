@@ -1,13 +1,13 @@
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 from datetime import date, datetime
-from sqlalchemy import func, and_
+from sqlalchemy import func, and_, distinct, cast, Float
 from app.core.database import get_db
 from app.services.security import get_current_user
 from app.models.t_tbs_dalam import TTbsDalam
 from app.models.t_trans_lintas_keluar import TTransLintasKeluar
 from app.models.t_trans_pemasaran import TTransPemasaran
-from app.models.m_lokasi import MLokasi
+# from app.models.m_lokasi import MLokasi
 
 router = APIRouter(
     prefix="/dashboard",
@@ -25,54 +25,68 @@ def get_date_filters(start_date: date | None, end_date: date | None):
 
 
 @router.get("/summary")
-def get_dashboard_summary(db: Session = Depends(get_db)):
-    """
-    Menampilkan ringkasan data produksi bulan berjalan:
-    - Total TBS Dalam
-    - Total Lintas Keluar
-    - Total Pemasaran
-    - Total Transaksi
-    """
+def get_production_summary(
+    start_date: date | None = Query(None),
+    end_date: date | None = Query(None),
+    db: Session = Depends(get_db)
+):
+    # --- default ke bulan berjalan ---
     today = date.today()
-    start_of_month = today.replace(day=1)
+    if not start_date:
+        start_date = today.replace(day=1)
+    if not end_date:
+        end_date = today
 
-    total_tbs_dalam = (
-        db.query(func.sum(TTbsDalam.Total))
-        .filter(TTbsDalam.TglTransaksiOne >= start_of_month)
-        .scalar()
-        or 0
+    # PRODUKSI TBS
+    tbs_query = (
+        db.query(
+            func.sum(TTbsDalam.Total).label("total_produksi"),
+            func.count(distinct(TTbsDalam.TglTransaksiOne)).label("jumlah_hari")
+        )
+        .filter(TTbsDalam.TglTransaksiOne >= start_date)
+        .filter(TTbsDalam.TglTransaksiOne <= end_date)
     )
 
-    total_lintas_keluar = (
-        db.query(func.sum(TTransLintasKeluar.Total))
-        .filter(TTransLintasKeluar.TglTmb1 >= start_of_month)
-        .scalar()
-        or 0
+    tbs_result = tbs_query.first()
+    total_tbs = tbs_result.total_produksi or 0
+    hari_tbs = tbs_result.jumlah_hari or 1
+    rata_tbs_per_hari = total_tbs / hari_tbs
+
+    # PEMASARAN CPO
+    cpo_query = (
+        db.query(
+            func.sum(TTransPemasaran.TotalTmb).label("total_terjual"),
+            func.avg(cast(TTransPemasaran.FFA, Float)).label("rata_rata_ffa"),
+            func.max(cast(TTransPemasaran.FFA, Float)).label("max_ffa"),
+            func.min(cast(TTransPemasaran.FFA, Float)).label("min_ffa")
+        )
+        .filter(TTransPemasaran.NamaProduk == "CPO")
+        .filter(TTransPemasaran.TglTmb1 >= start_date)
+        .filter(TTransPemasaran.TglTmb1 <= end_date)
     )
 
-    total_pemasaran = (
-        db.query(func.sum(TTransPemasaran.TotalTmb))
-        .filter(TTransPemasaran.TglTmb1 >= start_of_month)
-        .scalar()
-        or 0
-    )
+    cpo_result = cpo_query.first()
 
-    total_transaksi = (
-        db.query(func.count(TTbsDalam.NoTransaksi))
-        .filter(TTbsDalam.TglTransaksiOne >= start_of_month)
-        .scalar()
-        or 0
-    )
-
+    # --- Response ---
     return {
-        "message": "Dashboard summary retrieved successfully",
-        "period": {"start_date": str(start_of_month), "end_date": str(today)},
-        "data": {
-            "total_tbs_dalam": total_tbs_dalam,
-            "total_lintas_keluar": total_lintas_keluar,
-            "total_pemasaran": total_pemasaran,
-            "total_transaksi": total_transaksi,
+        "message": "Production & CPO summary retrieved successfully",
+        "period": {
+            "start_date": str(start_date),
+            "end_date": str(end_date)
         },
+        "data": {
+            "tbs": {
+                "total_panen": total_tbs,
+                "rata_rata_per_hari": rata_tbs_per_hari,
+
+            },
+            "cpo": {
+                "total_terjual": cpo_result.total_terjual or 0,
+                "rata_rata_ffa": cpo_result.rata_rata_ffa or 0,
+                "max_ffa": cpo_result.max_ffa or 0,
+                "min_ffa": cpo_result.min_ffa or 0
+            }
+        }
     }
 
 
