@@ -8,6 +8,7 @@ from app.routers import auth, dashboard
 import time
 from jose import JWTError
 from app.core.security import decode_access_token
+from fastapi.middleware.cors import CORSMiddleware
 
 
 # === Setup Logging ===
@@ -42,6 +43,20 @@ app = FastAPI(
     title=settings.APP_NAME,
     version=settings.APP_VERSION,
     debug=settings.DEBUG,
+)
+
+# Izinkan akses dari frontend Vite
+origins = [
+    "http://localhost:5173",  # frontend dev
+    "http://127.0.0.1:5173",  # alternatif dev
+]
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=origins,
+    allow_credentials=True,
+    allow_methods=["*"],      # izinkan semua method (GET, POST, dll)
+    allow_headers=["*"],      # izinkan semua header
 )
 
 # === Middleware: HTTP Request Logging + Username ===
