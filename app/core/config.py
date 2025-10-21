@@ -1,6 +1,7 @@
 import os
 import secrets
 from pydantic_settings import BaseSettings
+from pydantic import ConfigDict
 
 
 class Settings(BaseSettings):
@@ -22,10 +23,7 @@ class Settings(BaseSettings):
     LOG_DIR: str = "logs"
     LOG_FILE: str = "app.log"
 
-    class Config:
-        env_file = ".env"
-        env_file_encoding = "utf-8"
-
+    model_config = ConfigDict(env_file=".env", env_file_encoding = "utf-8")
 
 settings = Settings()
 

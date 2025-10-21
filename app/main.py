@@ -9,6 +9,7 @@ import time
 from jose import JWTError
 from app.core.security import decode_access_token
 from fastapi.middleware.cors import CORSMiddleware
+from contextlib import asynccontextmanager
 
 
 # === Setup Logging ===
@@ -37,12 +38,36 @@ logger.setLevel(logging.INFO)
 logger.addHandler(file_handler)
 logger.addHandler(console_handler)
 
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Lifespan event menggantikan on_event('startup')"""
+    # === Startup ===
+    parsed_db = urlparse(settings.DATABASE_URL)
+    db_info = f"{parsed_db.scheme}://{parsed_db.hostname or 'localhost'}/{parsed_db.path.lstrip('/')}"
+    
+    logger.info("=== Application Startup ===")
+    logger.info(f"App Name     : {settings.APP_NAME}")
+    logger.info(f"Version      : {settings.APP_VERSION}")
+    logger.info(f"Database URL : {db_info}")
+    logger.info(f"Debug Mode   : {settings.DEBUG}")
+    logger.info("==============================")
+
+    # Buat tabel jika belum ada
+    Base.metadata.create_all(bind=engine)
+    logger.info("Database tables ready.")
+
+    # yield = FastAPI “running” phase
+    yield
+
+    # === Shutdown ===
+    logger.info("=== Application Shutdown ===")
+
 
 # === FastAPI App ===
 app = FastAPI(
     title=settings.APP_NAME,
     version=settings.APP_VERSION,
-    debug=settings.DEBUG,
+    lifespan=lifespan
 )
 
 # Izinkan akses dari frontend Vite
@@ -96,23 +121,6 @@ async def log_http_requests(request: Request, call_next):
     )
 
     return response
-
-@app.on_event("startup")
-def startup_event():
-    """Log informasi konfigurasi saat server mulai"""
-    parsed_db = urlparse(settings.DATABASE_URL)
-    db_info = f"{parsed_db.scheme}://{parsed_db.hostname or 'localhost'}/{parsed_db.path.lstrip('/')}"
-
-    logger.info("=== Application Startup ===")
-    logger.info(f"App Name     : {settings.APP_NAME}")
-    logger.info(f"Version      : {settings.APP_VERSION}")
-    logger.info(f"Database URL : {db_info}")
-    logger.info(f"Debug Mode   : {settings.DEBUG}")
-    logger.info("==============================")
-
-    # Buat tabel jika belum ada
-    Base.metadata.create_all(bind=engine)
-    logger.info("Database tables ready.")
 
 
 @app.get("/")
