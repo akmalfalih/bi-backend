@@ -16,6 +16,7 @@ from app.core.security import (
     decode_access_token,
 )
 from app.core.config import settings
+from jose import JWTError
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -73,3 +74,20 @@ def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(
 @router.get("/me", response_model=UserOut)
 def read_current_user(current_user: User = Depends(get_current_user)):
     return current_user
+
+@router.post("/refresh", response_model=Token)
+def refresh_token(token: str = Depends(oauth2_scheme)):
+    """Generate new access token if the current one is still valid (before expiry)."""
+    try:
+        payload = decode_access_token(token)
+        username: Optional[str] = payload.get("sub")
+        if username is None:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token tidak valid")
+    except JWTError:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token tidak valid")
+
+    # Buat token baru
+    access_token_expires = timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
+    new_token = create_access_token(data={"sub": username}, expires_delta=access_token_expires)
+
+    return {"access_token": new_token, "token_type": "bearer"}
