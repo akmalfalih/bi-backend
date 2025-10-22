@@ -7,10 +7,12 @@ from app.services.security import get_current_user
 from app.models.t_tbs_dalam import TTbsDalam
 from app.models.t_trans_lintas_keluar import TTransLintasKeluar
 from app.models.t_trans_pemasaran import TTransPemasaran
+from app.services.mapping_kebun import get_kode_kebun
 from cachetools import TTLCache, cached
 from cachetools.keys import hashkey
 import logging
 # from app.models.m_lokasi import MLokasi
+
 # logger sederhana
 logger = logging.getLogger("APN-Riau.dashboard")
 logger.propagate = True  # biarkan log ini diteruskan ke root handler
@@ -254,15 +256,20 @@ def get_production_by_location(
     )
 
     results = query.all()
-    data = [
-        {"nama_kebun": r.nama_kebun or "Tidak Diketahui", "total": r.total_produksi or 0}
-        for r in results
-    ]
+    data = []
+    for r in results:
+        kode_kebun = get_kode_kebun(r.nama_kebun)
+        if not kode_kebun:
+            continue  # skip kebun yang tidak dikenali
+        data.append({
+            "kode_kebun": kode_kebun,
+            "total": r.total_produksi or 0
+        })
 
     response = {
-        "message": "Production by origin (NamaKebun) retrieved successfully",
+        "message": "Production by location (KodeKebun) retrieved successfully",
         "period": {"start_date": str(start_date), "end_date": str(end_date)},
-        "data": data
+        "data": data,
     }
 
     set_cache(cache_key, response)
@@ -308,6 +315,17 @@ def get_production_composition(
         }
         for r in results
     ]
+
+    data = []
+    for r in results:
+        kode_kebun = get_kode_kebun(r.NamaKebun)
+        if not kode_kebun:
+            continue  # skip kebun yang tidak dikenali
+        data.append({
+            "kode_kebun": kode_kebun,
+            "total": float(r.total),
+            "persentase": round((float(r.total) / total_all * 100), 2) if total_all > 0 else 0,
+        })
 
     return {
         "message": "Production composition retrieved successfully",
