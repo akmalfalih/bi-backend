@@ -6,9 +6,9 @@ from pydantic import ConfigDict
 
 class Settings(BaseSettings):
     # === App Info ===
-    APP_NAME: str = "Dashboard Backend"
-    APP_VERSION: str = "1.0.0"
-    DEBUG: bool = True
+    APP_NAME: str
+    APP_VERSION: str
+    DEBUG: bool
 
     # === Database ===
     DATABASE_URL: str
