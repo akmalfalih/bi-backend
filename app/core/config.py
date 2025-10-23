@@ -23,7 +23,7 @@ class Settings(BaseSettings):
     LOG_DIR: str = "logs"
     LOG_FILE: str = "app.log"
 
-    model_config = ConfigDict(env_file=".env", env_file_encoding = "utf-8")
+    model_config = ConfigDict(env_file=".env.production", env_file_encoding = "utf-8")
 
 settings = Settings()
 
