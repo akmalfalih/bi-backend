@@ -3,7 +3,7 @@ from app.core.database import Base
 
 
 class TTransLintas(Base):
-    __tablename__ = "TTransLintas"
+    __tablename__ = "ttranslintas"
 
     NoTransaksi = Column(String(50), primary_key=True, index=True)
     NoDO = Column(String(50))

@@ -3,7 +3,7 @@ from app.core.database import Base
 
 
 class TTbsDalam(Base):
-    __tablename__ = "TTbsDalam"
+    __tablename__ = "ttbsdalam"
 
     NoTransaksi = Column(String(100), primary_key=True, index=True)
     PlatNo = Column(String(50))

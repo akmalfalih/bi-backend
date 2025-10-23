@@ -2,7 +2,7 @@ from sqlalchemy import Column, Integer, String
 from app.core.database import Base  # pastikan Base di-import dari config yang berisi declarative_base()
 
 class MLokasi(Base):
-    __tablename__ = "MLokasi"
+    __tablename__ = "mlokasi"
 
     id_lokasi = Column(Integer, primary_key=True, autoincrement=True)
     kode_lokasi = Column(String(20), unique=True, nullable=False)

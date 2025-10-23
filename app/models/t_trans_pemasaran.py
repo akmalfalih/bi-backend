@@ -2,7 +2,7 @@ from sqlalchemy import Column, String, Integer, Float, Date, Time
 from app.core.database import Base
 
 class TTransPemasaran(Base):
-    __tablename__ = "TTransPemasaran"
+    __tablename__ = "ttranspemasaran"
 
     NoTransaksi = Column(String(50), primary_key=True, index=True)
     NoDO = Column(String(50))
