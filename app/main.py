@@ -76,6 +76,7 @@ origins = [
     "http://127.0.0.1:5173",  # alternatif dev
     "http://localhost:3000",  # frontend dev
     "http://127.0.0.1:3000",  # alternatif dev
+    "http://103.49.239.26/"
 ]
 
 app.add_middleware(
