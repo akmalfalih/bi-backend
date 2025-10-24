@@ -63,5 +63,5 @@ def test_by_location_endpoint():
     assert isinstance(body["data"], list)
     if body["data"]:
         first_item = body["data"][0]
-        assert "nama_kebun" in first_item
+        assert "kode_kebun" in first_item
         assert "total" in first_item
