@@ -71,7 +71,7 @@ def get_production_summary(
     # --- PRODUKSI TBS ---
     tbs_query = (
         db.query(
-            func.sum(TTbsDalam.Total).label("total_produksi"),
+            func.sum(TTbsDalam.Total).label("total_panen"),
             func.count(distinct(TTbsDalam.TglTransaksiOne)).label("jumlah_hari")
         )
         .filter(TTbsDalam.TglTransaksiOne >= start_date)
@@ -79,7 +79,7 @@ def get_production_summary(
     )
 
     tbs_result = tbs_query.first()
-    total_tbs = tbs_result.total_produksi or 0
+    total_tbs = tbs_result.total_panen or 0
     hari_tbs = tbs_result.jumlah_hari or 1
     rata_tbs_per_hari = total_tbs / hari_tbs
 
@@ -283,14 +283,14 @@ def get_production_composition(
     db: Session = Depends(get_db),
 ):
     """
-    Menampilkan proporsi produksi TBS berdasarkan NamaKebun (pie chart).
-    Bisa difilter berdasarkan tanggal dan lokasi timbang.
+    Menampilkan proporsi produk berdasarkan NamaProduk (pie chart).
+    Bisa difilter berdasarkan tanggal dan NamaKebun.
     """
     start, end = get_date_filters(start_date, end_date)
 
     query = (
         db.query(
-            TTbsDalam.NamaKebun,
+            TTbsDalam.NamaProduk,
             func.sum(TTbsDalam.Total).label("total")
         )
         .filter(
@@ -304,28 +304,17 @@ def get_production_composition(
     if nama_kebun:
         query = query.filter(TTbsDalam.NamaKebun == nama_kebun)
 
-    results = query.group_by(TTbsDalam.NamaKebun).all()
+    results = query.group_by(TTbsDalam.NamaProduk).all()
     total_all = sum(float(r.total) for r in results)
 
     data = [
         {
-            "nama_kebun": r.NamaKebun,
+            "nama_produk": r.NamaProduk,
             "total": float(r.total),
             "persentase": round((float(r.total) / total_all * 100), 2) if total_all > 0 else 0,
         }
         for r in results
     ]
-
-    data = []
-    for r in results:
-        kode_kebun = get_kode_kebun(r.NamaKebun)
-        if not kode_kebun:
-            continue  # skip kebun yang tidak dikenali
-        data.append({
-            "kode_kebun": kode_kebun,
-            "total": float(r.total),
-            "persentase": round((float(r.total) / total_all * 100), 2) if total_all > 0 else 0,
-        })
 
     return {
         "message": "Production composition retrieved successfully",
